@@ -1,0 +1,18 @@
+NCPU: 5
+pathToFastaFiles: "../obtainCoreOrthologsFastaFiles/"
+bootstrap: 100
+model: "PROTGAMMAGTR"
+#model: "GTRGAMMA"
+other: "-f a -x 12345 -p 12345 --bootstop-perms 100"
+
+groupsForRELAX: setGroups.tab
+
+allCDSs_fasta: ../obtainCoreOrthologsFastaFiles/allCDSs.fasta
+allAAs_fasta: ../obtainCoreOrthologsFastaFiles/allAAs.fasta
+
+
+# parameters for the plotting R script\
+colourFile: colourFileAustrolebiasPanel.tab
+
+pantherAnnotation: ../obtainCoreOrthologsFastaFiles/all.panther 
+speciesOrder: "Austrolebias_charrua,Nematolebias_whitei,Cynopoecilus_melanotaenia,Austrofundulus_limnaeus,Kryptolebias_marmoratus,Nothobranchius_furzeri,Oryzias_latipes"

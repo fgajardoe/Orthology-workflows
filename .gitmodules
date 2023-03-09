@@ -1,0 +1,3 @@
+[submodule "alignOrthologs/hyphy-analyses"]
+	path = alignOrthologs/hyphy-analyses
+	url = https://github.com/veg/hyphy-analyses.git

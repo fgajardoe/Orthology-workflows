@@ -1,0 +1,191 @@
+rule getNonRedundantPantherfams:
+	input:
+		"{specie}.PANTHER"
+	output:
+		"{specie}.PANTHER.nr"
+	shell:
+		"cut -f2 {input}|sort -u > {output}"
+
+rule getCoreList:
+	input:
+		expand("{specie}.consolidatedTableSingleCopy.tab", specie=config["species"])
+	output:
+		"core.lst"
+	params:
+		len(config["species"])
+	shell:
+		"cat {input}| cut -f2 |sort |uniq -c |grep -Pe' {params} '|awk '{{print $2}}' > {output}"
+
+rule getConsolidatedTable:
+	input:
+		"{specie}.PANTHER"
+	output:
+		"{specie}.consolidatedTable.tab"
+	shell:
+		"cat {input} |cut -f1,2 | awk '{{print $0\"\t{wildcards.specie}\"}}' > {output}"
+
+rule getConsolidatedTableSingleCopy:
+	input:
+		"{specie}.consolidatedTable.tab"
+	output:
+		"{specie}.consolidatedTableSingleCopy.tab"
+	shell:
+		"less {input} |cut -f2 |sort |uniq -c |grep -Pe' 1 ' |awk '{{print $2}}' | grep -Fwf - {input} > {output} "
+
+rule catConsolidatedTables:
+	input:
+		expand("{sp}.consolidatedTableSingleCopy.tab", sp=config["species"])
+	output:
+		"consolidatedTableSingleCopy.tab"
+	shell:
+		"cat {input} > {output}"
+
+
+
+rule getTabFastas:
+	input:
+		nt="allCDSs.fasta",
+		aa="allAAs.fasta"
+	output:
+		nt="allCDSs.fasta.tab",
+		aa="allAAs.fasta.tab"
+	shell:
+		"""
+		grep \">\" {input.nt}|cut -c2- |seqtk subseq -t {input.nt} - > {output.nt} &&
+		grep \">\" {input.aa}|cut -c2- |seqtk subseq -t {input.aa} - > {output.aa}
+		"""
+
+rule getConsolidatedTableWithSeq:
+	input:
+		panther="consolidatedTableSingleCopy.tab",
+		cds="allCDSs.fasta.tab",
+		aa="allAAs.fasta.tab"
+	output:
+		"consolidatedTableSingleCopyWithSeq.tab"
+	shell:
+		"less {input.panther} |awk 'BEGIN{{while(getline < \"{input.cds}\"){{cds[$1]=$3}}; while(getline < \"{input.aa}\"){{aa[$1]=$3}} }}{{print $0\"\t\"cds[$1]\"\t\"aa[$1]}}' > {output} "
+
+rule detectInFrameRegion:
+	input:
+		"consolidatedTableSingleCopyWithSeq.tab"
+	output:
+		"inFrameRegions.tblastn.m6"
+	threads:
+		config["NCPU"]
+	shell:
+		"""
+		TXS=`less {input} |cut -f1 |sort |uniq -c |grep -Pe' 1 ' |awk 'BEGIN{{i=0}}{{ print $2; i=i+1 }}' `
+		for tx in $TXS; do
+			echo $tx &&
+			cut -f1,2,4 {input}| grep -Pe $tx'\\t' | awk '{{ print \">\"$1\" \"$2\"\\n\"$3 }}'> cds.tmp.fasta &&
+			cut -f1,2,5 {input} | grep -Pe $tx'\\t' | awk '{{ print \">\"$1\" \"$2\"\\n\"$3 }}'> aa.tmp.fasta &&
+			makeblastdb -in cds.tmp.fasta -dbtype nucl &&
+			tblastn -query aa.tmp.fasta -db cds.tmp.fasta -outfmt '6 std qlen slen' -num_threads {threads} -max_target_seqs 1 >> {output} &&
+			rm cds.tmp.fasta aa.tmp.fasta
+		done
+		"""
+#awk 'BEGIN{{i=0}}{{if(i<10){{print $2}} i=i+1 }}'
+
+rule obtainInFrameRegionSequences:
+	input:
+		bl="inFrameRegions.tblastn.m6",
+		nt="allCDSs.fasta",
+	output:
+		"allInFrameRegions.fasta"
+	shell:
+		"less {input.bl}|awk '{{if($1==$2 && $3==100 && $4>10){{ if($4>d[$1]){{ d[$1]=$4; l[$1]=$0  }} }}}}END{{for(line in l){{ print l[line] }}}}' |awk '{{if($9<$10){{strand=\"+\"; start=$9-1; end=$10}}else{{strand=\"-\"; start=$10-1; end=$9}} print $2\"\\t\"start\"\\t\"end\"\\t.\\t\"strand}}' |seqtk subseq {input.nt} - |awk '{{if(/^>/){{split($0,a,\":\"); print a[1]}}else{{print $0}}}}' > {output} "
+
+rule obtainInFrameRegionSequencesTab:
+	input:
+		bl="inFrameRegions.tblastn.m6",
+		t="consolidatedTableSingleCopyWithSeq.tab",
+		nt="allCDSs.fasta",
+	output:
+		"consolidatedTableSingleCopyWithSeqIncludingInFrame.tab"
+	shell:
+		"less {input.bl}|awk '{{if($1==$2 && $3==100 && $4>10){{ if($4>d[$1]){{ d[$1]=$4; l[$1]=$0  }} }}}}END{{for(line in l){{ print l[line] }}}}' |awk '{{if($9<$10){{strand=\"+\"; start=$9-1; end=$10}}else{{strand=\"-\"; start=$10-1; end=$9}} print $2\"\t\"start\"\t\"end\"\t.\t\"strand}}' |seqtk subseq -t {input.nt} - |cut -f1,3 | awk '{{ d[$1]=$2}}END{{while(getline < \"{input.t}\"){{ if(d[$1]!=\"\"){{print $0\"\t\"d[$1] }} }}}}' > {output}"
+
+#rule generateOrthologFasta_InFrameRegions:
+#	input:
+#		tab="consolidatedTableSingleCopyWithSeqIncludingInFrame.tab",
+#		core="core.lst"
+#	output:
+#		touch("generateOrthologFasta_InFrameRegions.done")
+#	shell:
+#		"less {input.tab} | grep -Fwf {input.core} |perl -pe's/:/_/g'|awk '{{print \">\"$3\" \"$1\"\\n\"$6 > \"panther.inFrame.\"$2\".fasta\"}}'"
+
+rule generateOrthologFasta_NT:
+	input:
+		tab="consolidatedTableSingleCopyWithSeq.tab",
+		core="core.lst"
+	output:
+		touch("generateOrthologFasta_NT.done")
+	shell:
+		"less {input.tab} | grep -Fwf {input.core} |perl -pe's/:/_/g'|awk '{{print \">\"$3\" \"$1\"\\n\"$4 > \"panther.\"$2\".fasta\"}}'"
+rule generateOrthologFasta_AA:
+	input:
+		tab="consolidatedTableSingleCopyWithSeq.tab",
+		core="core.lst"
+	output:
+		touch("generateOrthologFasta_AA.done")
+	shell:
+		"less {input.tab} | grep -Fwf {input.core} |perl -pe's/:/_/g'|awk '{{print \">\"$3\" \"$1\"\\n\"$5 > \"panther.\"$2\".faa\"}}'"
+
+rule generateOrthologFastaLst:
+	input:
+		tab="consolidatedTableWithSeq.tab",
+		core="core.lst"
+	output:
+		"allPantherFastaFiles.lst"
+	shell:
+		"less {input.tab} | grep -Fwf {input.core} |perl -pe's/:/_/g'|awk '{{print $2}}' > {output}"
+
+
+
+rule getCDSsAllSpecies:
+	input:
+		expand("{sp}.CDSs.fasta",sp=config["species"])
+	output:
+		touch("getAllCDSs.done")
+
+rule getCDS_sequences:
+	input:
+		g="{specie}.genome.fasta",
+		a="{specie}.gene-annotation.gff",
+	output:
+		n="{specie}.CDSs.fasta",
+		p="{specie}.AAs.fasta"
+	shell:
+		"gffread -g {input.g} -x {output.n} -y {output.p} {input.a}"
+
+rule catCDS_sequences:
+	input:
+		nt=expand("{sp}.CDSs.fasta",sp=config["species"]),
+		aa=expand("{sp}.AAs.fasta",sp=config["species"])
+	output:
+		nt="allCDSs.fasta",
+		aa="allAAs.fasta"
+	shell:
+		"cat {input.nt} > {output.nt} && cat {input.aa} > {output.aa}"
+
+rule alignNtAndProt:
+	input:
+		n="{specie}.CDSs.fasta",
+		p="{specie}.AAs.fasta"
+	output:
+		"{specie}.tblastn.m6"
+	threads:
+		config["NCPU"]
+	shell:
+		"makeblastdb -in {input.n} -dbtype nucl && tblastn -query {input.p} -db {input.n} -outfmt '6 std qlen slen' -num_threads {threads} -max_target_seqs 1 | awk '{{ print $0\"\t\"$4*100/$13\"\t\"$4*100/$14 }}' > {output}"
+
+
+
+
+rule generateConsolidatedPantherAnnotation:
+	input:
+		expand("{sp}.PANTHER",sp=config["species"]),
+	output:
+		"all.panther"
+	shell:
+		"find {input} |xargs -I%s sh -c \"echo %s && cat %s\" |awk '{{ if(/PANTHER$/){{sp=$0}}else{{print sp\"\t\"$0}} }}' | perl -pe's/\.PANTHER//g' > {output}"

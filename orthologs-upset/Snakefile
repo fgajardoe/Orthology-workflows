@@ -1,0 +1,11 @@
+configfile: "config.yaml"
+R_CONTAINER="docker run -it -v /:/home/user -w /home/user/`pwd` fgajardoe/r-custom:latest "
+rule run:
+	input:
+		expand("{specie}.PANTHER",specie=config["species"])
+	output:
+		config["prefix"]+".RData"
+	params:
+		p=config["prefix"]
+	shell:
+		R_CONTAINER+" Rscript run.R {params.p} {input}"

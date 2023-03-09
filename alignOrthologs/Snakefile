@@ -1,0 +1,241 @@
+configfile: "config.yaml"
+
+CLUSTALO_EXEC_PATH="/opt/clustalo"
+RAXML_EXEC_PATH="/storage/dump/Orestias/expandedPhylogenyOct2021/fastaToTree/standard-RAxML/raxmlHPC-PTHREADS"
+MACSE_EXEC_CMD="java -jar /opt/macse_v2.06.jar "
+CONTAINER_CMD="docker run -v `pwd`:/home/user fgajardoe/phylogenomic-analysis-container "
+CONTAINER_R_CMD="docker run -v /:/home/user -w /home/user"+os.getcwd()+" fgajardoe/r-custom:latest "
+NCPU=config["NCPU"]
+FASTA_DIR=config["pathToFastaFiles"]
+#text_file = open(FASTA_DIR+"allPantherFastaFiles.lst", "r")
+#list_files = text_file.read().splitlines()
+
+#wildcard_constraints:
+#	dataset="\w+"
+
+
+rule generateConfigFile:
+	input:
+		FASTA_DIR
+	output:
+		"config.pantherfams.yaml"
+	shell:
+		"find ../obtainCoreOrthologsFastaFiles/panther.*.faa|awk 'BEGIN{{print \"NCPU: "+str(NCPU)+"\\npantherfams:\"}}{{split($0,a,\".\"); id=a[4]; print \"  \"id\": \"$0}}' |grep -Pe'NCPU|PTH|pantherfams' > {output} && find ../obtainCoreOrthologsFastaFiles/panther.*.fasta|awk 'BEGIN{{print \"\\npantherfams_CDSs:\"}}{{split($0,a,\".\"); id=a[4]; print \"  \"id\": \"$0}}' |grep -Pe'NCPU|PTH|pantherfams_CDSs' >> {output}"
+
+
+
+def getInputFastaFiles(wildcards):
+	return str(config["pantherfams"][wildcards.pantherId])
+
+def getInputFastaFilesCDSs(wildcards):
+	return str(config["pantherfams_CDSs"][wildcards.pantherId])
+
+
+
+
+rule all_aln:
+	input:
+		expand("panther.{pantherId}.pal2nal.out",pantherId=config["pantherfams"])
+		#expand("panther.{pantherId}.out-gb.noSpaces.uniqueId.noGapSeqs",pantherId=config["pantherfams"])
+	output:
+		"all_aln.done"
+
+rule all_tree:
+	input:
+		expand("panther.{pantherId}.bestTree",pantherId=config["pantherfams"])
+	output:
+		"all_tree.done"
+
+
+rule all:
+	input:
+		expand("panther.{pantherId}.relax.log",pantherId=config["pantherfams"]),
+		"plotRelaxResults.RData"
+	output:
+		"all.done"
+
+#rule runMSA_codonAware:
+#	input:
+#		getInputFastaFiles
+#	output:
+#		nt="panther.{pantherId}.out",
+#		aa="panther.{pantherId}.out.AA"
+#	threads: 2
+#	shell:
+#		MACSE_EXEC_CMD+" -prog alignSequences -seq {input} -out_NT {output.nt}  -out_AA {output.aa} "
+
+
+rule runMSA_AA:
+	input:
+		getInputFastaFiles
+	output:
+		"panther.{pantherId}.out"
+	threads:
+		NCPU
+	shell:
+		CLUSTALO_EXEC_PATH+" -i {input} -o {output} --threads {threads}"
+
+rule runPalTwoNal:
+	input:
+		aa_aln="panther.{pantherId}.out",
+		nt_seq=getInputFastaFilesCDSs
+	output:
+		out="panther.{pantherId}.pal2nal.out",
+		#err="panther.{pantherId}.pal2nal.err"
+	shell:
+		"pal2nal.pl {input.aa_aln} {input.nt_seq} -nogap -nomismatch -output fasta | awk '{{if(/^>/){{print \"\\n\"$0}}else{{printf $0}}}}' > {output.out}"
+
+#rule runMSA:
+#	input:
+#		getInputFastaFiles
+#	output:
+#		"panther.{pantherId}.out"
+#	threads:
+#		NCPU
+#	shell:
+#		CLUSTALO_EXEC_PATH+" -i {input} -o {output} --threads {threads} --use-kimura"
+
+
+
+
+#rule replaceExclamationMark:
+#	input:
+#		"panther.{pantherId}.out",
+#	output:
+#		"panther.{pantherId}.out.frameShiftAsGap",
+#	shell:
+#		"less {input} | perl -pe'if(!/^>/){{s/!/-/g}}' > {output}"
+
+
+#rule getBlocks:
+#	input:
+#		"panther.{pantherId}.out"
+#	params:
+#		"-t=d -b5=n"
+#	output:
+#		"panther.{pantherId}.out-gb"
+#	shell: 
+#		CONTAINER_CMD+" sh -c '/opt/Gblocks_0.91b/Gblocks {input} {params} > /dev/null; exit 0 ' "
+#rule removeSpaces:
+#	input: 
+#		"panther.{pantherId}.out-gb"
+#	output:
+#		"panther.{pantherId}.out-gb.noSpaces"
+#	shell:
+#		"less {input} |perl -ne'if(/^>/){{ print $_;  }}else{{s/ //g; print $_; }}' > {output}"
+#rule manageRedundancy:
+#	input:
+#		"panther.{pantherId}.out-gb.noSpaces"
+#	output:
+#		"panther.{pantherId}.out-gb.noSpaces.uniqueId"
+#	shell:
+#		# do nothing
+#		"cat {input} > {output}"
+#
+#		# uncomment this to arbitrary numerate redundant sequences of the same specie
+#		#"less {input} | awk '{{if(/^>/){{ d[$0]=d[$0]+1; print $0\"-\"d[$0]}}else{{print $0}}}}' > {output}"
+#rule removeFullGapSequencesFromBlock:
+#	input:
+#		"panther.{pantherId}.out-gb.noSpaces.uniqueId"
+#	output:
+#		out="panther.{pantherId}.out-gb.noSpaces.uniqueId.noGapSeqs",
+#		err="panther.{pantherId}.out-gb.noSpaces.uniqueId.emptyBlocksSeqs"
+#	shell:
+#		"less {input} |grep -Pe'^>' |cut -c2- |seqtk subseq -t {input} - |cut -f1,3 |perl -ne 'my @cols=split(\"\t\",$_); $lenSeq=length($cols[1]); my $count = () = $cols[1] =~ /-/g; $count=$count+1; if($lenSeq != $count){{print \">\".$cols[0].\"\n\".$cols[1].\"\n\"}} if($lenSeq == $count){{print STDERR $cols[0].\"\n\"}}' > {output.out} 2>{output.err}"
+
+
+rule buildTree:
+	input:
+		"panther.{pantherId}.pal2nal.out"
+		#"panther.{pantherId}.out-gb.noSpaces.uniqueId.noGapSeqs",
+		#"panther.{pantherId}.out"
+	params:
+		bootstrap=config["bootstrap"],
+		model=config["model"],
+		sufix="{pantherId}.RAxML",
+		other=config["other"],
+	output:
+		bestTreeOut="RAxML_bestTree.{pantherId}.RAxML",
+		bootstrapOut="RAxML_bootstrap.{pantherId}.RAxML"
+	threads:
+		NCPU
+	shell:
+		RAXML_EXEC_PATH+" -s {input} -n {params.sufix} -N {params.bootstrap} -m {params.model} -T {threads} {params.other}"
+
+
+rule prepareInputTreeForRELAX:
+	input:
+		tree="RAxML_bestTree.{pantherId}.RAxML",
+		sets=config["groupsForRELAX"]
+	output:
+		"panther.{pantherId}.bestTree"
+	shell:
+		" less {input.tree} | perl -ne'open(F,\"<\",\"{input.sets}\"); my %d={{}}; foreach my $line(<F>){{ chomp($line); my @c=split(\"\\t\",$line); $d{{$c[0]}}=$c[1]; }} close(F); foreach my $sp(keys(%d)){{ my $set=$d{{$sp}}; $_=~s/$sp/$sp\{{$set\}}/g; }} print $_;'  > {output} "
+
+
+#rule removeTerminalStopCodonFromSeq_completeAln:
+#	input:
+#		"panther.{pantherId}.out.frameShiftAsGap",
+#	output:
+#		"panther.{pantherId}.out.frameShiftAsGap.noStopCodon",
+#	shell:
+#		"less {input} | awk '{{if(/^>/){{print $0}}else{{print substr($0,1,length($0)-3)}}}}' > {output}"
+
+
+
+
+#rule removeTerminalStopCodonFromSeq:
+#	input:
+#		"panther.{pantherId}.out-gb.noSpaces.uniqueId.noGapSeqs",
+#	output:
+#		"panther.{pantherId}.out-gb.noSpaces.uniqueId.noGapSeqs.noStopCodon",
+#	shell:
+#		"less {input} |perl -pe'if($_!~/^>/g){{ s/(TGA|TAA|TAG)$//g }}' > {output} "
+
+rule runRelax:
+	input:
+		aln="panther.{pantherId}.pal2nal.out",
+#		aln="panther.{pantherId}.out.frameShiftAsGap.noStopCodon",
+		#aln="panther.{pantherId}.out-gb.noSpaces.uniqueId.noGapSeqs.noStopCodon",
+		tre="panther.{pantherId}.bestTree"
+	output:
+		out="panther.{pantherId}.relax.log",
+		#err="panther.{pantherId}.relax.err"
+	threads:
+		NCPU
+	shell:
+		"hyphy hyphy-analyses/RELAX-scan/RELAX.bf --alignment {input.aln} --tree {input.tre} > {output.out}"
+
+rule plotRelax:
+	output:
+		"plotRelaxResults.RData"
+	params:
+		"0.05",
+		config["colourFile"],
+		config["pantherAnnotation"],
+		config["speciesOrder"]
+	shell:
+		CONTAINER_R_CMD+" Rscript plotRelaxResults.R {params} *json"
+
+
+
+#rule processRelaxResults:
+#	input:
+#		expand("panther.{pantherId}.relax.log",pantherId=config["pantherfams"])
+#	output:
+#		"table-summarising-all-relax-results.tab"
+#	shell:
+#		"cat *.relax.log |grep -Pe'^\|' | awk 'BEGIN{{while(getline < \"setGroups.tab\"){{ d[$1]=1 }}}}{{if(d[$2]==1){{print $0}}}}' |awk '{{print $2\"\t\"$4\"\t\"$6\"\t\"$8\"\t\"$9}}' |perl -pe's/\|/No significant/g; s/\(\*\)/Significant/g' > {output}"
+		#"cat *.relax.log |grep -Pe'^\|' | awk 'BEGIN{{while(getline < \"setGroups.tab\"){{ d[$1]=1 }}}}{{if(d[$2]==1){{print $0}}}}' |awk '{{print $2\"\t\"$4\"\t\"$6\"\t\"$8\"\t\"$9}}' |perl -pe's/\|/No significant/g; s/\(\*\)/Significant/g' > {output}"
+
+
+
+
+
+
+
+
+
+
+
+

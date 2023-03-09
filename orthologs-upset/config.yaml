@@ -1,0 +1,12 @@
+species:
+  - Austrolebias_charrua
+  - Nematolebias_whitei
+  - Cynopoecilus_melanotaenia
+  - Austrofundulus_limnaeus
+  - Kryptolebias_marmoratus
+  - Nothobranchius_furzeri
+  - Oryzias_latipes
+
+prefix: "panel_Aplocheilidae"
+
+speciesColourFile: "colourFileAustrolebiasPanel.tab" # default or tab separated file
